@@ -1,0 +1,49 @@
+name: VisionDrop
+options:
+  bundleIdPrefix: com.rebelancap
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+targets:
+  VisionDrop:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources: [MacApp, Shared]
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rebelancap.visiondrop
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 57G8J46Z2T
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: MacApp/Info.plist
+      properties:
+        CFBundleDisplayName: VisionDrop
+        LSApplicationCategoryType: public.app-category.utilities
+        NSLocalNetworkUsageDescription: VisionDrop discovers your Vision Pro and sends files to it over the USB link or local network.
+        NSBonjourServices: [_visiondrop._tcp]
+  VisionDropReceiver:
+    type: application
+    platform: visionOS
+    deploymentTarget: "2.0"
+    sources: [VisionApp, Shared]
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rebelancap.visiondrop.receiver
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 57G8J46Z2T
+        TARGETED_DEVICE_FAMILY: "7"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: VisionApp/Info.plist
+      properties:
+        CFBundleDisplayName: VisionDrop
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSLocalNetworkUsageDescription: VisionDrop receives files from your Mac over the USB link or local network.
+        NSBonjourServices: [_visiondrop._tcp]
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false

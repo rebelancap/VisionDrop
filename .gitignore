@@ -1,0 +1,8 @@
+build/
+build-vision/
+build-release/
+VisionDrop.xcodeproj/
+VisionDrop-*.zip
+share/
+.DS_Store
+node_modules/
