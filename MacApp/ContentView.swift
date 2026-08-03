@@ -61,7 +61,7 @@ struct ContentView: View {
             Image(systemName: "arrow.down.doc.fill")
                 .font(.system(size: 34))
                 .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary)
-            Text(dropTargeted ? "Release to send" : "Drop files to send")
+            Text(dropTargeted ? "Release to send" : "Drop files or folders to send")
                 .font(.headline)
             Text("or click to choose…")
                 .font(.caption)
@@ -122,7 +122,7 @@ struct ContentView: View {
     private func choose() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         if panel.runModal() == .OK {
             sender.send(panel.urls)
         }

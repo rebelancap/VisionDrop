@@ -23,7 +23,7 @@ struct ReceiverView: View {
         }
         .padding(24)
         .fileImporter(isPresented: $showImporter,
-                      allowedContentTypes: [.item],
+                      allowedContentTypes: [.item, .folder],
                       allowsMultipleSelection: true) { result in
             if case .success(let urls) = result {
                 sender.send(urls, securityScoped: true)

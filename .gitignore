@@ -3,6 +3,9 @@ build-vision/
 build-release/
 VisionDrop.xcodeproj/
 VisionDrop-*.zip
+VisionDropReceiver-*.ipa
+scripts/release.env
+ota/
 share/
 .DS_Store
 node_modules/

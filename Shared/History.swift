@@ -9,6 +9,7 @@ struct HistoryEntry: Codable, Identifiable {
     let bytesPerSec: Double
     let direction: String // "send" | "receive"
     let transport: String // "usb" | "wifi" | "unknown"
+    var fileCount: Int?   // folders only; absent in pre-1.1 history files
 }
 
 /// Successful transfers, persisted to Application Support as JSON.
@@ -36,7 +37,8 @@ final class HistoryStore: ObservableObject {
             seconds: (item.finishedAt ?? Date()).timeIntervalSince(item.startedAt),
             bytesPerSec: item.averageSpeed,
             direction: item.direction == .send ? "send" : "receive",
-            transport: transportString(item.transport)
+            transport: transportString(item.transport),
+            fileCount: item.fileCount
         )
         entries.insert(entry, at: 0)
         if entries.count > 200 { entries.removeLast(entries.count - 200) }

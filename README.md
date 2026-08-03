@@ -4,10 +4,11 @@ Drag-and-drop file transfer between a Mac and Apple Vision Pro over the USB-C
 Developer Strap — at **18.5 Gbps sustained** (2.3 GB/s, writing to disk). A
 25 GB file lands in about 10 seconds.
 
-Drop files on the Mac app and they appear in Files → On My Vision Pro →
-VisionDrop. Pick files on the headset and they land in the Mac's ~/Downloads.
-Live progress, speed, and ETA on both ends; a USB/WiFi badge that tells you
-which path you're actually on; cancel buttons; and a persisted, clearable
+Drop files — or whole folders — on the Mac app and they appear in Files →
+On My Vision Pro → VisionDrop. Pick files or folders on the headset and they
+land in the Mac's ~/Downloads. Live progress, speed, and ETA on both ends; a
+USB/WiFi badge that tells you which path you're actually on (measured by the
+receiving end, not guessed); cancel buttons; and a persisted, clearable
 transfer history.
 
 No network configuration required — plug in the strap and drop. No WiFi
@@ -49,8 +50,10 @@ stalling on writeback. The residual ~3% is TCP/IP and syscall overhead.
   winner, every transfer.
 - **Resilience.** Link-local IPv6 means the fast lane works even when DHCP
   doesn't (hotels, bridges, captive networks). Discovery self-heals after
-  reboots and address changes, and a transfer that starts while the fast NIC
-  is waking re-races automatically.
+  reboots and address changes. An idle strap NIC silently drops the first
+  SYNs of a new connection while it wakes (~2 s to complete a handshake) —
+  background keep-warm pings prevent that, and the race waits it out when it
+  happens anyway.
 
 ## Requirements
 
@@ -95,15 +98,20 @@ System Settings → Privacy & Security → Local Network).
   one stream of one transfer — 6-byte magic, length-prefixed JSON header
   (transfer id, name, size, offset, length, stream index/count), then raw
   payload. The receiver preallocates the file sparsely, writes each stream at
-  its offset with direct I/O, finalizes, then acks.
+  its offset with direct I/O, finalizes, then acks. Folders travel as a batch
+  of files sharing a batch id, names carrying relative paths; the receiver
+  sanitizes them and rebuilds the tree under a collision-renamed root.
 - **Discovery**: each side advertises `_visiondrop._tcp` via Bonjour with its
   IPv4, routable IPv6, and link-local IPv6 addresses in the TXT record, plus
   the raw data port.
 - **Path selection** (`Shared/SenderModel.swift`): raw-socket handshake race
   across every advertised address (link-locals probed sequentially per address
   across scope interfaces — concurrent same-address scoped connects poison
-  each other), then a 16 MiB bandwidth blast down all survivors; first pong
-  wins. Winners under 400 Mbps trigger one delayed re-race.
+  each other), then a 16 MiB bandwidth blast down all survivors. The pong
+  reports the interface class the blast landed on: a wired-class pong over
+  400 Mbps wins instantly, anything else waits for late-connecting candidates
+  (a cold strap NIC needs ~2 s for its first handshake) before settling on
+  the best measured path. Winners under 400 Mbps trigger one delayed re-race.
 - **Data plane** (`Shared/BSDSocket.swift`, `Shared/ReceiverModel.swift`):
   everything is kernel sockets. Network.framework is used *only* for Bonjour —
   its path evaluation refuses bridge interfaces in app contexts and its

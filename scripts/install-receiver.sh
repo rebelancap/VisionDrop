@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")/.."
 export DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p | sed 's|/Contents/Developer||')/Contents/Developer}"
-DEVICE="${1:-$(xcrun devicectl list devices 2>/dev/null | grep -i 'vision pro' \
+DEVICE="${1:-$(xcrun devicectl list devices 2>/dev/null | grep -i 'vision pro' | grep -i 'physical' \
   | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' | head -1)}"
 if [ -z "$DEVICE" ]; then
   echo "No paired Vision Pro found (xcrun devicectl list devices)"; exit 1

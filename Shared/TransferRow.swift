@@ -16,6 +16,11 @@ struct TransferRow: View {
                         .font(.callout.weight(.medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    if let n = item.fileCount {
+                        Text("\(n) file\(n == 1 ? "" : "s")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     transportBadge
                     Spacer()
                     Text(trailingText)
@@ -61,7 +66,8 @@ struct TransferRow: View {
         case .connecting:
             Image(systemName: "clock").foregroundStyle(.secondary)
         case .transferring:
-            Image(systemName: item.direction == .receive ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
+            Image(systemName: item.fileCount != nil ? "folder.fill"
+                : (item.direction == .receive ? "arrow.down.circle.fill" : "arrow.up.circle.fill"))
                 .foregroundStyle(.blue)
         case .done:
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)

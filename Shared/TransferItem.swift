@@ -19,6 +19,8 @@ final class TransferItem: ObservableObject, Identifiable {
     let name: String
     let size: Int64
     let direction: Direction
+    /// Number of files when this transfer is a folder; nil for single files.
+    let fileCount: Int?
     let startedAt = Date()
     private(set) var finishedAt: Date?
 
@@ -33,11 +35,13 @@ final class TransferItem: ObservableObject, Identifiable {
     private var lastTick = Date()
     private var firstByteAt: Date?
 
-    init(id: String = UUID().uuidString, name: String, size: Int64, direction: Direction = .send) {
+    init(id: String = UUID().uuidString, name: String, size: Int64,
+         direction: Direction = .send, fileCount: Int? = nil) {
         self.id = id
         self.name = name
         self.size = size
         self.direction = direction
+        self.fileCount = fileCount
     }
 
     var isActive: Bool { phase == .connecting || phase == .transferring }

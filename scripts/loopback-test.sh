@@ -10,6 +10,7 @@ fi
 OUT=$(mktemp -d)
 xcrun swiftc -O \
   Shared/WireProtocol.swift Shared/TransferItem.swift Shared/NetUtils.swift \
-  Shared/BSDSocket.swift Shared/SenderModel.swift Shared/ReceiverModel.swift \
+  Shared/BSDSocket.swift Shared/InterfaceClass.swift \
+  Shared/SenderModel.swift Shared/ReceiverModel.swift \
   Tests/Loopback/main.swift -o "$OUT/loopback-test"
 "$OUT/loopback-test" "$OUT/vd-loopback"

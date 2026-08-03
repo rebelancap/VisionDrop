@@ -12,7 +12,9 @@ enum VD {
     static let chunkSize = 8 * 1024 * 1024
     static let maxStreams = 4
     static let ackData = Data("OK".utf8)
-    static let pongData = Data("PO".utf8)
+    static let pongData = Data("PO".utf8)     // transport unknown (legacy receivers)
+    static let pongUSB = Data("PU".utf8)      // receiver landed the blast on a wired interface
+    static let pongWiFi = Data("PW".utf8)     // receiver landed the blast on WiFi
     static let txtAddrs = "addrs" // IPv4 addresses, comma-separated
     static let txtLL6 = "ll6"     // IPv6 link-locals (no zone) — USB path without DHCP
     static let txtG6 = "g6"       // routable IPv6 (ULA/global) — scope-free fast path
@@ -45,10 +47,18 @@ struct StreamHeader: Codable {
     var streamCount: Int
     var ping: Bool?
     /// On a ping: receiver must read and discard this many payload bytes before
-    /// replying "PO". Used to bandwidth-race candidate paths — the dev strap
-    /// exposes both a fast USB4 NIC and a slow USB-CDC one, and handshake
+    /// replying with a pong. Used to bandwidth-race candidate paths — the dev
+    /// strap exposes both a fast USB4 NIC and a slow USB-CDC one, and handshake
     /// latency can't tell them apart.
     var blast: Int64? = nil
+    /// Folder transfers: every file of one dropped folder shares a batch id,
+    /// and `name` carries a relative path ("Folder/sub/file.bin"). The receiver
+    /// aggregates the batch into one visible transfer of `batchTotal` bytes /
+    /// `batchFiles` files. All optional — absent on single-file transfers and
+    /// ignored by JSONDecoder on old receivers.
+    var batchId: String? = nil
+    var batchTotal: Int64? = nil
+    var batchFiles: Int? = nil
 
     func encodedFrame() -> Data {
         var d = Data(VD.magic)

@@ -64,6 +64,7 @@ struct HistoryRow: View {
     }
 
     private var caption: String {
-        "\(Fmt.bytes(entry.size)) · \(Fmt.duration(entry.seconds)) · \(Fmt.speed(entry.bytesPerSec)) · \(entry.date.formatted(date: .abbreviated, time: .shortened))"
+        let files = entry.fileCount.map { " · \($0) file\($0 == 1 ? "" : "s")" } ?? ""
+        return "\(Fmt.bytes(entry.size))\(files) · \(Fmt.duration(entry.seconds)) · \(Fmt.speed(entry.bytesPerSec)) · \(entry.date.formatted(date: .abbreviated, time: .shortened))"
     }
 }

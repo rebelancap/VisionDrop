@@ -15,8 +15,12 @@ struct BSDEndpoint: CustomStringConvertible {
 /// kernel sockets have neither problem. This is the same hot path curl uses.
 enum BSDSocket {
     /// Blocking TCP connect with a poll-based timeout. Returns a connected,
-    /// blocking fd tuned for bulk transfer, or nil.
-    static func connect(_ ep: BSDEndpoint, timeoutMs: Int32 = 1500) -> Int32? {
+    /// blocking fd tuned for bulk transfer, or nil. On failure, `failErrno`
+    /// (when given) receives the errno — EHOSTUNREACH on every candidate is
+    /// the signature of a stalled Local Network permission, worth telling the
+    /// user about (relaunching the app fixes it).
+    static func connect(_ ep: BSDEndpoint, timeoutMs: Int32 = 1500,
+                        failErrno: UnsafeMutablePointer<Int32>? = nil) -> Int32? {
         var storage = sockaddr_storage()
         var salen: socklen_t = 0
         let isV6 = ep.addr.contains(":")
@@ -57,16 +61,25 @@ enum BSDSocket {
             p.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, salen) }
         }
         if rc != 0 && errno != EINPROGRESS {
+            failErrno?.pointee = errno
             close(fd)
             return nil
         }
         if rc != 0 {
             var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-            guard poll(&pfd, 1, timeoutMs) > 0 else { close(fd); return nil }
+            guard poll(&pfd, 1, timeoutMs) > 0 else {
+                failErrno?.pointee = ETIMEDOUT
+                close(fd)
+                return nil
+            }
             var soErr: Int32 = 0
             var len = socklen_t(MemoryLayout<Int32>.size)
             getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len)
-            guard soErr == 0 else { close(fd); return nil }
+            guard soErr == 0 else {
+                failErrno?.pointee = soErr
+                close(fd)
+                return nil
+            }
         }
         rc = fcntl(fd, F_SETFL, flags) // back to blocking
         return fd

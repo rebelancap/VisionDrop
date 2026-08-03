@@ -27,6 +27,7 @@ final class ReceiverModel: ObservableObject {
 
     private let lock = NSLock()
     private var incoming: [String: IncomingFile] = [:]
+    private var batches: [String: ReceiveBatch] = [:]
 
     private var destDir: URL {
         destination ?? Self.documentsOverride
@@ -127,7 +128,15 @@ final class ReceiverModel: ObservableObject {
                 if n <= 0 { close(fd); return }
                 remaining -= Int64(n)
             }
-            _ = BSDSocket.sendAll(fd, VD.pongData)
+            // Report which interface class the blast actually landed on —
+            // bandwidth alone can't tell fast WiFi from the strap.
+            let pong: Data
+            switch InterfaceClassifier.shared.classify(fd: fd) {
+            case .wired: pong = VD.pongUSB
+            case .wifi: pong = VD.pongWiFi
+            case .unknown: pong = VD.pongData
+            }
+            _ = BSDSocket.sendAll(fd, pong)
             close(fd)
             return
         }
@@ -136,13 +145,34 @@ final class ReceiverModel: ObservableObject {
 
     private func receiveBSDStream(_ fd: Int32, _ h: StreamHeader) {
         lock.lock()
+        var batch: ReceiveBatch?
+        if let bid = h.batchId {
+            batch = batches[bid]
+            if batch == nil {
+                guard let b = try? ReceiveBatch(header: h, dir: destDir) else {
+                    lock.unlock()
+                    close(fd)
+                    return
+                }
+                batches[bid] = b
+                batch = b
+                DispatchQueue.main.async { self.transfers.insert(b.item, at: 0) }
+            }
+            if let b = batch, b.cancelled || b.failed {
+                lock.unlock()
+                close(fd)
+                return
+            }
+        }
         var inc = incoming[h.transferId]
         if inc == nil {
             do {
-                let file = try IncomingFile(header: h, dir: destDir)
+                let file = try IncomingFile(header: h, dir: destDir, batch: batch)
                 incoming[h.transferId] = file
                 inc = file
-                DispatchQueue.main.async { self.transfers.insert(file.item, at: 0) }
+                if batch == nil {
+                    DispatchQueue.main.async { self.transfers.insert(file.item, at: 0) }
+                }
             } catch {
                 lock.unlock()
                 close(fd)
@@ -156,6 +186,13 @@ final class ReceiverModel: ObservableObject {
         }
         inc.fds.append(fd)
         lock.unlock()
+
+        // Badge from the interface this stream actually landed on.
+        switch InterfaceClassifier.shared.classify(fd: fd) {
+        case .wired: DispatchQueue.main.async { inc.item.transport = .usb }
+        case .wifi: DispatchQueue.main.async { inc.item.transport = .wifi }
+        case .unknown: break
+        }
 
         let file = open(inc.tempURL.path, O_WRONLY)
         guard file >= 0 else {
@@ -345,14 +382,18 @@ final class ReceiverModel: ObservableObject {
 
     func cancel(_ item: TransferItem) {
         lock.lock()
-        let inc = incoming.values.first { $0.item === item }
-        inc?.cancelled = true
-        let conns = inc?.conns ?? []
-        let fds = inc?.fds ?? []
+        // Batch children share the batch's item, so this finds them too.
+        let targets = incoming.values.filter { $0.item === item }
+        let batch = batches.values.first { $0.item === item }
+        batch?.cancelled = true
+        targets.forEach { $0.cancelled = true }
+        let conns = targets.flatMap { $0.conns }
+        let fds = targets.flatMap { $0.fds }
         lock.unlock()
         conns.forEach { $0.cancel() }
         fds.forEach { shutdown($0, SHUT_RDWR) }
-        if let inc { streamFailed(inc, "Cancelled", interrupted: true) }
+        targets.forEach { streamFailed($0, "Cancelled", interrupted: true) }
+        if targets.isEmpty, let batch { batchFailed(batch, "Cancelled", interrupted: true) }
     }
 
     func dismiss(_ item: TransferItem) {
@@ -500,12 +541,30 @@ final class ReceiverModel: ObservableObject {
         guard complete else { return }
         do {
             try inc.finalize()
+        } catch {
+            if let batch = inc.batch {
+                batchFailed(batch, "Could not move a finished file into place")
+            } else {
+                DispatchQueue.main.async { inc.item.finish(.failed("Could not move the finished file into place")) }
+            }
+            return
+        }
+        if let batch = inc.batch {
+            lock.lock()
+            batch.filesDone += 1
+            let batchComplete = batch.filesDone == batch.expectedFiles && !batch.failed
+            if batchComplete { batches[batch.id] = nil }
+            lock.unlock()
+            guard batchComplete else { return }
+            DispatchQueue.main.async {
+                batch.item.finish(.done)
+                self.onCompleted?(batch.item)
+            }
+        } else {
             DispatchQueue.main.async {
                 inc.item.finish(.done)
                 self.onCompleted?(inc.item)
             }
-        } catch {
-            DispatchQueue.main.async { inc.item.finish(.failed("Could not move the finished file into place")) }
         }
     }
 
@@ -523,9 +582,54 @@ final class ReceiverModel: ObservableObject {
         conns.forEach { $0.cancel() }
         fds.forEach { shutdown($0, SHUT_RDWR) }
         inc.discard()
-        DispatchQueue.main.async {
-            inc.item.finish(interrupted ? .stopped(msg) : .failed(msg))
+        if let batch = inc.batch {
+            batchFailed(batch, msg, interrupted: interrupted)
+        } else {
+            DispatchQueue.main.async {
+                inc.item.finish(interrupted ? .stopped(msg) : .failed(msg))
+            }
         }
+    }
+
+    /// One failed/cancelled file fails the whole folder — the remaining files
+    /// of the batch are refused as they arrive. Files already landed stay.
+    private func batchFailed(_ batch: ReceiveBatch, _ msg: String, interrupted: Bool = false) {
+        lock.lock()
+        let already = batch.failed
+        batch.failed = true
+        batches[batch.id] = nil
+        lock.unlock()
+        guard !already else { return }
+        DispatchQueue.main.async {
+            batch.item.finish(interrupted ? .stopped(msg) : .failed(msg))
+        }
+    }
+}
+
+/// One incoming folder: its files arrive as separate transfers sharing a batch
+/// id and aggregate into a single visible item. The root folder is created
+/// (collision-renamed if needed) once; every file lands inside it.
+final class ReceiveBatch {
+    let id: String
+    let item: TransferItem
+    let rootDir: URL
+    let expectedFiles: Int
+    var filesDone = 0
+    var failed = false
+    var cancelled = false
+
+    init(header: StreamHeader, dir: URL) throws {
+        guard let bid = header.batchId,
+              let rootName = IncomingFile.safeComponents(header.name).first else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        id = bid
+        rootDir = IncomingFile.uniqueURL(for: rootName, in: dir)
+        try FileManager.default.createDirectory(at: rootDir, withIntermediateDirectories: true)
+        expectedFiles = max(1, header.batchFiles ?? 1)
+        item = TransferItem(id: bid, name: rootDir.lastPathComponent,
+                            size: header.batchTotal ?? header.size, direction: .receive,
+                            fileCount: expectedFiles)
     }
 }
 
@@ -536,6 +640,7 @@ final class IncomingFile {
     let item: TransferItem
     let tempURL: URL
     let streamCount: Int
+    let batch: ReceiveBatch?
     var streamsDone = 0
     var failed = false
     var cancelled = false
@@ -543,15 +648,28 @@ final class IncomingFile {
     var fds: [Int32] = []
 
     private let dir: URL
-    private let name: String
+    private let relComponents: [String] // destination path under `dir`
 
-    init(header: StreamHeader, dir: URL) throws {
+    init(header: StreamHeader, dir: URL, batch: ReceiveBatch? = nil) throws {
         id = header.transferId
-        name = header.name
-        self.dir = dir
+        self.batch = batch
         streamCount = header.streamCount
-        item = TransferItem(id: header.transferId, name: header.name, size: header.size, direction: .receive)
-        tempURL = dir.appendingPathComponent(".vdpart-\(header.transferId)")
+        let comps = Self.safeComponents(header.name)
+        if let batch {
+            // The first component is the sender's root folder name — already
+            // consumed (and possibly collision-renamed) by the batch.
+            let rest = Array(comps.dropFirst())
+            guard !rest.isEmpty else { throw CocoaError(.fileWriteInvalidFileName) }
+            relComponents = rest
+            self.dir = batch.rootDir
+            item = batch.item
+        } else {
+            guard let last = comps.last else { throw CocoaError(.fileWriteInvalidFileName) }
+            relComponents = [last]
+            self.dir = dir
+            item = TransferItem(id: header.transferId, name: last, size: header.size, direction: .receive)
+        }
+        tempURL = self.dir.appendingPathComponent(".vdpart-\(header.transferId)")
         FileManager.default.createFile(atPath: tempURL.path, contents: nil)
         let fh = try FileHandle(forWritingTo: tempURL)
         // Sparse truncate only — measured faster on visionOS than F_PREALLOCATE,
@@ -560,8 +678,20 @@ final class IncomingFile {
         try fh.close()
     }
 
+    /// Wire names may carry relative paths ("Folder/sub/file"). Neutralize
+    /// anything that could escape the destination.
+    static func safeComponents(_ name: String) -> [String] {
+        name.split(separator: "/").map(String.init).filter { $0 != "" && $0 != "." && $0 != ".." }
+    }
+
     func finalize() throws {
-        try FileManager.default.moveItem(at: tempURL, to: Self.uniqueURL(for: name, in: dir))
+        var parent = dir
+        for c in relComponents.dropLast() { parent.appendPathComponent(c) }
+        if relComponents.count > 1 {
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        }
+        try FileManager.default.moveItem(at: tempURL,
+                                         to: Self.uniqueURL(for: relComponents[relComponents.count - 1], in: parent))
     }
 
     func discard() {
